@@ -57,7 +57,13 @@ export function useConfirmations() {
         if (remember) {
             saveDecision(tool, { path }, true);
         }
-        window.ipcRenderer.invoke('agent:confirm-response', { id, approved: true, remember, tool, path });
+        window.ipcRenderer.invoke('agent:confirm-response', {
+            id,
+            approved: true,
+            remember,
+            tool,
+            path
+        });
         setPendingRequest(null);
     };
 
@@ -66,7 +72,11 @@ export function useConfirmations() {
         setPendingRequest(null);
     };
 
-    return { pendingRequest, handleConfirm, handleDeny };
+    return {
+        pendingRequest,
+        handleConfirm,
+        handleDeny
+    };
 }
 
 export type { ConfirmationRequest };

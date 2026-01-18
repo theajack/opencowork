@@ -39,6 +39,8 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
     const [showHistory, setShowHistory] = useState(false);
     const [sessions, setSessions] = useState<SessionSummary[]>([]);
     const [modelName, setModelName] = useState<string>('Claude-3.5-Sonnet');
+    const [draggedFiles, setDraggedFiles] = useState<File[]>([]);
+    const [isDragOver, setIsDragOver] = useState(false);
 
     // Change ref to textarea
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -60,12 +62,18 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
         }
     };
 
-    // Load config including model name
+    // Load config including model name and working directory
     useEffect(() => {
         window.ipcRenderer.invoke('config:get-all').then((cfg) => {
             const config = cfg as { model?: string } | undefined;
             if (config?.model) setModelName(config.model);
         });
+        
+        // Load current working directory
+        window.ipcRenderer.invoke('agent:get-working-dir').then((dir) => {
+            if (dir) setWorkingDir(dir as string);
+        });
+        
         // Listen for streaming tokens
         const removeStreamListener = window.ipcRenderer.on('agent:stream-token', (_event, ...args) => {
             const token = args[0] as string;
@@ -117,19 +125,27 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if ((!input.trim() && images.length === 0) || isProcessing) return;
+        if ((!input.trim() && images.length === 0 && draggedFiles.length === 0) || isProcessing) return;
 
         setStreamingText('');
 
+        // Build message with files
+        let message = input.trim();
+        if (draggedFiles.length > 0) {
+            const fileNames = draggedFiles.map(f => `文件: ${f.name}`).join('\n');
+            message = message ? `${message}\n\n${fileNames}` : fileNames;
+        }
+
         // Send as object if images exist, otherwise string for backward compat
         if (images.length > 0) {
-            onSendMessage({ content: input, images });
+            onSendMessage({ content: message, images });
         } else {
-            onSendMessage(input);
+            onSendMessage(message);
         }
 
         setInput('');
         setImages([]);
+        setDraggedFiles([]);
     };
 
     const handleSelectFolder = async () => {
@@ -193,6 +209,57 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
         setImages(prev => prev.filter((_, i) => i !== index));
     };
 
+    const removeDraggedFile = (index: number) => {
+        setDraggedFiles(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const handleDragEnter = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(true);
+    };
+
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'copy';
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // 只有当离开整个拖拽区域时才设置为false
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+            setIsDragOver(false);
+        }
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'copy';
+        setIsDragOver(false);
+
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length === 0) return;
+
+        files.forEach(file => {
+            if (file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const result = e.target?.result as string;
+                    if (result) {
+                        setImages(prev => [...prev, result]);
+                    }
+                };
+                reader.readAsDataURL(file);
+            } else {
+                // Non-image file: add to dragged files list
+                setDraggedFiles(prev => [...prev, file]);
+            }
+        });
+    };
+
     // Keyboard shortcuts
     useEffect(() => {
         const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -207,7 +274,7 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
     }, []);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             handleSubmit(e as any);
         }
@@ -434,7 +501,7 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
 
                             {streamingText && (
                                 <div className="animate-in fade-in duration-200">
-                                    <div className="text-stone-700 text-[15px] leading-7 max-w-none">
+                                    <div className="text-stone-700 text-[15px] leading-7 max-w-none" style={{ wordBreak: 'break-all' }}>
                                         <MarkdownRenderer content={streamingText} />
                                         <span className="inline-block w-2 h-5 bg-orange-500 ml-0.5 animate-pulse" />
                                     </div>
@@ -472,8 +539,30 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
                         </div>
                     )}
 
+                    {/* Dragged Files Preview */}
+                    {draggedFiles.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-2">
+                            {draggedFiles.map((file, idx) => (
+                                <div key={idx} className="flex items-center gap-1 px-2 py-1 bg-blue-50 border border-blue-200 rounded-md text-xs text-blue-700">
+                                    <span className="truncate max-w-[150px]">{file.name}</span>
+                                    <button
+                                        onClick={() => removeDraggedFile(idx)}
+                                        className="text-blue-500 hover:text-blue-700"
+                                    >
+                                        <X size={10} />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
                     <form onSubmit={handleSubmit}>
-                        <div className="flex flex-col bg-[#FAF9F7] border border-stone-200 rounded-[20px] px-3 pt-2 pb-1 shadow-sm transition-all hover:shadow-md focus-within:ring-4 focus-within:ring-orange-50/50 focus-within:border-orange-200">
+                        <div className={`flex flex-col bg-[#FAF9F7] border border-stone-200 rounded-[20px] px-3 pt-2 pb-1 shadow-sm transition-all hover:shadow-md focus-within:ring-4 focus-within:ring-orange-50/50 focus-within:border-orange-200 ${isDragOver ? 'border-orange-400 bg-orange-50' : ''}`}
+                            onDragEnter={handleDragEnter}
+                            onDragOver={handleDragOver}
+                            onDragLeave={handleDragLeave}
+                            onDrop={handleDrop}
+                        >
 
                             <textarea
                                 ref={inputRef}
@@ -550,8 +639,8 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
                                     ) : (
                                         <button
                                             type="submit"
-                                            disabled={!input.trim() && images.length === 0}
-                                            className={`p-1 rounded-lg transition-all shadow-sm flex items-center justify-center ${input.trim() || images.length > 0
+                                            disabled={!input.trim() && images.length === 0 && draggedFiles.length === 0}
+                                            className={`p-1 rounded-lg transition-all shadow-sm flex items-center justify-center ${input.trim() || images.length > 0 || draggedFiles.length > 0
                                                 ? 'bg-orange-500 text-white hover:bg-orange-600 hover:shadow-orange-200 hover:shadow-md'
                                                 : 'bg-stone-100 text-stone-300 cursor-not-allowed'
                                                 }`}
@@ -596,7 +685,7 @@ function MessageItem({ message, expandedBlocks, toggleBlock, showTools, onImageC
         const images = contentArray.filter((b): b is Anthropic.ImageBlockParam => 'type' in b && b.type === 'image');
 
         return (
-            <div className="space-y-2 max-w-[85%]">
+            <div className="space-y-2 max-w-[85%]" style={{ wordBreak: 'break-all' }}>
                 {images.length > 0 && (
                     <div className="flex gap-2 flex-wrap">
                         {images.map((img, i: number) => {
@@ -615,7 +704,7 @@ function MessageItem({ message, expandedBlocks, toggleBlock, showTools, onImageC
                     </div>
                 )}
                 {text && (
-                    <div className="user-bubble inline-block">
+                    <div className="user-bubble inline-block" style={{ wordBreak: 'break-all' }}>
                         {text}
                     </div>
                 )}
@@ -651,7 +740,7 @@ function MessageItem({ message, expandedBlocks, toggleBlock, showTools, onImageC
             {groupedBlocks.map((block, i: number) => {
                 if (block.type === 'text' && block.text) {
                     return (
-                        <div key={i} className="text-stone-700 text-[15px] leading-7 max-w-none">
+                        <div key={i} className="text-stone-700 text-[15px] leading-7 max-w-none" style={{ wordBreak: 'break-all' }}>
                             <MarkdownRenderer content={block.text} />
                         </div>
                     );
@@ -693,14 +782,14 @@ function MessageItem({ message, expandedBlocks, toggleBlock, showTools, onImageC
                                             </div>
                                         </div>
                                         {isExpanded && (
-                                            <div className="p-3 bg-stone-50 border-t border-stone-100">
+                                            <div className="p-3 bg-stone-50 border-t border-stone-100" style={{ wordBreak: 'break-all' }}>
                                                 {/* For Context Skills (empty input), show a friendly message */}
                                                 {Object.keys(tool.input || {}).length === 0 ? (
                                                     <div className="text-xs text-emerald-600 font-medium">
                                                         ✓ Skill loaded into context
                                                     </div>
                                                 ) : (
-                                                    <pre className="text-xs font-mono text-stone-500 whitespace-pre-wrap overflow-x-auto">
+                                                    <pre className="text-xs font-mono text-stone-500 whitespace-pre-wrap overflow-x-auto" style={{ wordBreak: 'break-all' }}>
                                                         {JSON.stringify(tool.input, null, 2)}
                                                     </pre>
                                                 )}
