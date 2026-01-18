@@ -1,17 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Square, ArrowUp, ChevronDown, ChevronUp, Download, FolderOpen, MessageCircle, Zap, AlertTriangle, Check, X, Settings, History, Plus, Trash2 } from 'lucide-react';
+import { Square, ArrowUp, ChevronDown, ChevronUp, Download, FolderOpen, MessageCircle, Zap, X, Settings, History, Plus, Trash2 } from 'lucide-react';
 import { useI18n } from '../i18n/I18nContext';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import Anthropic from '@anthropic-ai/sdk';
 
 type Mode = 'chat' | 'work';
-
-interface PermissionRequest {
-    id: string;
-    tool: string;
-    description: string;
-    args: Record<string, unknown>;
-}
 
 interface SessionSummary {
     id: string;
@@ -35,7 +28,6 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
     const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(new Set());
     const [streamingText, setStreamingText] = useState('');
     const [workingDir, setWorkingDir] = useState<string | null>(null);
-    const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
     const [showHistory, setShowHistory] = useState(false);
     const [sessions, setSessions] = useState<SessionSummary[]>([]);
     const [modelName, setModelName] = useState<string>('Claude-3.5-Sonnet');
@@ -90,22 +82,14 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
             }
         });
 
-        // Listen for permission requests
-        const removeConfirmListener = window.ipcRenderer.on('agent:confirm-request', (_event, ...args) => {
-            const req = args[0] as PermissionRequest;
-            setPermissionRequest(req);
-        });
-
         // Listen for abort events
         const removeAbortListener = window.ipcRenderer.on('agent:aborted', () => {
             setStreamingText('');
-            setPermissionRequest(null);
         });
 
         return () => {
             removeStreamListener?.();
             removeHistoryListener?.();
-            removeConfirmListener?.();
             removeAbortListener?.();
         };
     }, []);
@@ -154,16 +138,6 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
             setWorkingDir(folder);
             // Set as primary working directory (also authorizes it)
             await window.ipcRenderer.invoke('agent:set-working-dir', folder);
-        }
-    };
-
-    const handlePermissionResponse = (approved: boolean) => {
-        if (permissionRequest) {
-            window.ipcRenderer.invoke('agent:confirm-response', {
-                id: permissionRequest.id,
-                approved
-            });
-            setPermissionRequest(null);
         }
     };
 
@@ -293,50 +267,6 @@ export function CoworkView({ history, onSendMessage, onAbort, isProcessing, onOp
 
     return (
         <div className="flex flex-col h-full bg-[#FAF8F5] relative">
-            {/* Permission Dialog Overlay */}
-            {permissionRequest && (
-                <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl animate-in fade-in zoom-in-95 duration-200">
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center">
-                                <AlertTriangle size={24} className="text-amber-600" />
-                            </div>
-                            <div>
-                                <h3 className="font-semibold text-stone-800 text-lg">操作确认</h3>
-                                <p className="text-sm text-stone-500">{permissionRequest.tool}</p>
-                            </div>
-                        </div>
-
-                        <p className="text-stone-600 mb-4">{permissionRequest.description}</p>
-
-                        {/* Show details if write_file */}
-                        {typeof permissionRequest.args?.path === 'string' && (
-                            <div className="bg-stone-50 rounded-lg p-3 mb-4 font-mono text-xs text-stone-600">
-                                <span className="text-stone-400">路径: </span>
-                                {permissionRequest.args.path as string}
-                            </div>
-                        )}
-
-                        <div className="flex gap-3">
-                            <button
-                                onClick={() => handlePermissionResponse(false)}
-                                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-xl transition-colors"
-                            >
-                                <X size={16} />
-                                拒绝
-                            </button>
-                            <button
-                                onClick={() => handlePermissionResponse(true)}
-                                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 rounded-xl transition-colors"
-                            >
-                                <Check size={16} />
-                                允许
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* Image Lightbox */}
             {selectedImage && (
                 <div
